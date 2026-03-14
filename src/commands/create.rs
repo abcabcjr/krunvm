@@ -12,7 +12,9 @@ use crate::utils::{
     get_buildah_args, mount_container, path_pairs_to_hash_map, port_pairs_to_hash_map,
     umount_container, BuildahCommand, PathPair, PortPair,
 };
-use crate::{KrunvmConfig, VmConfig, APP_NAME};
+use crate::{
+    store_krunvm_config, KrunvmConfig, NetworkBackend, VmConfig, VmNetworkConfig, APP_NAME,
+};
 
 #[cfg(target_os = "macos")]
 const KRUNVM_ROSETTA_FILE: &str = ".krunvm-rosetta";
@@ -39,6 +41,14 @@ pub struct CreateCmd {
     #[arg(long)]
     dns: Option<String>,
 
+    /// Networking backend for the microVM
+    #[arg(long = "net-backend", value_enum)]
+    net_backend: Option<NetworkBackend>,
+
+    /// Unix socket path for the selected networking backend
+    #[arg(long = "net-socket-path")]
+    net_socket_path: Option<String>,
+
     /// Working directory inside the microVM
     #[arg(short, long, default_value = "")]
     workdir: String,
@@ -63,11 +73,21 @@ impl CreateCmd {
         let mut cpus = self.cpus.unwrap_or(cfg.default_cpus);
         let mem = self.mem.unwrap_or(cfg.default_mem);
         let dns = self.dns.unwrap_or_else(|| cfg.default_dns.clone());
+        let network = VmNetworkConfig::new(
+            self.net_backend.unwrap_or(cfg.default_network.backend),
+            self.net_socket_path
+                .or_else(|| cfg.default_network.socket_path.clone()),
+        );
         let workdir = self.workdir;
         let mapped_volumes = path_pairs_to_hash_map(self.volumes);
         let mapped_ports = port_pairs_to_hash_map(self.ports);
         let image = self.image;
         let name = self.name;
+
+        if let Err(error) = network.validate_persisted("VM network configuration") {
+            println!("{error}");
+            std::process::exit(-1);
+        }
 
         if let Some(ref name) = name {
             if name.is_empty() {
@@ -164,6 +184,7 @@ https://threedots.ovh/blog/2022/06/quick-look-at-rosetta-on-linux/
             workdir: workdir.to_string(),
             mapped_volumes,
             mapped_ports,
+            network,
         };
 
         let rootfs = mount_container(cfg, &vmcfg).unwrap();
@@ -176,7 +197,7 @@ https://threedots.ovh/blog/2022/06/quick-look-at-rosetta-on-linux/
         umount_container(cfg, &vmcfg).unwrap();
 
         cfg.vmconfig_map.insert(name.clone(), vmcfg);
-        confy::store(APP_NAME, cfg).unwrap();
+        store_krunvm_config(cfg);
 
         println!("microVM created with name: {}", name);
     }
@@ -187,7 +208,7 @@ fn fix_resolv_conf(rootfs: &str, dns: &str) -> Result<(), std::io::Error> {
     fs::create_dir_all(resolvconf_dir)?;
     let resolvconf = format!("{}/etc/resolv.conf", rootfs);
     let mut file = fs::File::create(resolvconf)?;
-    file.write_all(b"options use-vc\nnameserver ")?;
+    file.write_all(b"nameserver ")?;
     file.write_all(dns.as_bytes())?;
     file.write_all(b"\n")?;
     Ok(())

@@ -5,7 +5,7 @@ use clap::Args;
 use std::collections::HashMap;
 
 use crate::utils::{path_pairs_to_hash_map, port_pairs_to_hash_map, PathPair, PortPair};
-use crate::{KrunvmConfig, APP_NAME};
+use crate::{store_krunvm_config, KrunvmConfig, NetworkBackend, VmNetworkConfig};
 
 use super::list::printvm;
 
@@ -26,6 +26,18 @@ pub struct ChangeVmCmd {
     /// Amount of RAM in MiB
     #[arg(long)]
     mem: Option<u32>,
+
+    /// Networking backend for the microVM
+    #[arg(long = "net-backend", value_enum)]
+    net_backend: Option<NetworkBackend>,
+
+    /// Unix socket path for the selected networking backend
+    #[arg(long = "net-socket-path")]
+    net_socket_path: Option<String>,
+
+    /// Remove the configured unix socket path
+    #[arg(long = "clear-net-socket-path")]
+    clear_net_socket_path: bool,
 
     /// Working directory inside the microVM
     #[arg(short, long)]
@@ -130,12 +142,35 @@ impl ChangeVmCmd {
             cfg_changed = true;
         }
 
+        let mut network = vmcfg.network.clone();
+        if let Some(backend) = self.net_backend {
+            network.backend = backend;
+            if backend == NetworkBackend::Tsi {
+                network.socket_path = None;
+            }
+            cfg_changed = true;
+        }
+        if self.clear_net_socket_path {
+            network.socket_path = None;
+            cfg_changed = true;
+        }
+        if self.net_socket_path.is_some() {
+            network.socket_path = self.net_socket_path;
+            cfg_changed = true;
+        }
+        network = VmNetworkConfig::new(network.backend, network.socket_path.clone());
+        if let Err(error) = network.validate_persisted("VM network configuration") {
+            println!("{error}");
+            std::process::exit(-1);
+        }
+        vmcfg.network = network;
+
         println!();
         printvm(vmcfg);
         println!();
 
         if cfg_changed {
-            confy::store(APP_NAME, &cfg).unwrap();
+            store_krunvm_config(cfg);
         }
     }
 }

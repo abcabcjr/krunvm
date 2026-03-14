@@ -12,6 +12,12 @@ const COMMANDS: [&str; 7] = [
 ];
 
 fn main() {
+    if env::var_os("KRUNVM_SKIP_MAN_PAGES").is_some() {
+        #[cfg(target_os = "macos")]
+        println!("cargo:rustc-link-search=/opt/homebrew/lib");
+        return;
+    }
+
     let outdir = match env::var_os("OUT_DIR") {
         Some(outdir) => outdir,
         None => {

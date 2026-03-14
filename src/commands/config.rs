@@ -1,7 +1,7 @@
 // Copyright 2021 Red Hat, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::{KrunvmConfig, APP_NAME};
+use crate::{store_krunvm_config, KrunvmConfig, NetworkBackend, VmNetworkConfig};
 use clap::Args;
 
 /// Configure global values
@@ -18,6 +18,18 @@ pub struct ConfigCmd {
     /// DNS server to use in the microVM
     #[arg(long)]
     dns: Option<String>,
+
+    /// Default networking backend for newly created VMs
+    #[arg(long = "net-backend", value_enum)]
+    net_backend: Option<NetworkBackend>,
+
+    /// Default unix socket path for the selected networking backend
+    #[arg(long = "net-socket-path")]
+    net_socket_path: Option<String>,
+
+    /// Remove the default unix socket path
+    #[arg(long = "clear-net-socket-path")]
+    clear_net_socket_path: bool,
 }
 
 impl ConfigCmd {
@@ -47,8 +59,32 @@ impl ConfigCmd {
             cfg_changed = true;
         }
 
+        let mut default_network = cfg.default_network.clone();
+        if let Some(backend) = self.net_backend {
+            default_network.backend = backend;
+            if backend == NetworkBackend::Tsi {
+                default_network.socket_path = None;
+            }
+            cfg_changed = true;
+        }
+        if self.clear_net_socket_path {
+            default_network.socket_path = None;
+            cfg_changed = true;
+        }
+        if self.net_socket_path.is_some() {
+            default_network.socket_path = self.net_socket_path;
+            cfg_changed = true;
+        }
+        default_network =
+            VmNetworkConfig::new(default_network.backend, default_network.socket_path.clone());
+        if let Err(error) = default_network.validate_persisted("Global network configuration") {
+            println!("{error}");
+            std::process::exit(-1);
+        }
+        cfg.default_network = default_network;
+
         if cfg_changed {
-            confy::store(APP_NAME, &cfg).unwrap();
+            store_krunvm_config(cfg);
         }
 
         println!("Global configuration:");
@@ -63,6 +99,17 @@ impl ConfigCmd {
         println!(
             "Default DNS server for newly created VMs: {}",
             cfg.default_dns
+        );
+        println!(
+            "Default network backend for newly created VMs: {}",
+            cfg.default_network.backend
+        );
+        println!(
+            "Default network socket path for newly created VMs: {}",
+            cfg.default_network
+                .socket_path
+                .as_deref()
+                .unwrap_or("<none>")
         );
     }
 }

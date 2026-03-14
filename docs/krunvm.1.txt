@@ -28,10 +28,10 @@ krunvm supports mounting additional local directories into the
 microVM and exposing ports from the guest to the host (and the
 networks connected to it).
 
-Networking to the guest running in the microVM is provided by
-libkrun's TSI (Transparent Socket Impersonation), enabling a seamless
-experience that doesn't require network bridges nor other explicit
-network configuration.
+If no explicit network backend is configured, networking to the guest
+running in the microVM uses libkrun's TSI (Transparent Socket
+Impersonation), enabling a seamless experience that doesn't require
+network bridges nor other explicit network configuration.
 
 
 GLOBAL OPTIONS

@@ -7,7 +7,7 @@
 * Minimal footprint
 * Fast boot time
 * Zero disk image maintenance
-* Zero network configuration
+* TSI networking by default, with optional explicit virtio-net backends
 * Support for mapping host volumes into the guest
 * Support for exposing guest ports to the host
 

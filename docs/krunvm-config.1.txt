@@ -34,6 +34,15 @@ OPTIONS
   Sets the default mount of RAM, in MiB, that will be configured for
   newly created microVMs.
 
+*--net-backend* _BACKEND_::
+  Sets the default networking backend for newly created microVMs.
+
+*--net-socket-path* _PATH_::
+  Sets the default unix socket path for the selected networking backend.
+
+*--clear-net-socket-path*::
+  Removes the configured default unix socket path.
+
 
 SEE ALSO
 --------

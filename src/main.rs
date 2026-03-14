@@ -16,7 +16,7 @@ use std::os::unix::ffi::OsStringExt;
 use crate::commands::{
     ChangeVmCmd, ConfigCmd, CreateCmd, DeleteCmd, InspectCmd, ListCmd, StartCmd,
 };
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(target_os = "macos")]
 use nix::unistd::execve;
 use serde_derive::{Deserialize, Serialize};
@@ -30,7 +30,117 @@ mod utils;
 
 const APP_NAME: &str = "krunvm";
 
+pub fn load_krunvm_config() -> KrunvmConfig {
+    if let Ok(path) = env::var("KRUNVM_CONFIG_PATH") {
+        return confy::load_path(path).unwrap();
+    }
+    confy::load(APP_NAME).unwrap()
+}
+
+pub fn store_krunvm_config(cfg: &KrunvmConfig) {
+    if let Ok(path) = env::var("KRUNVM_CONFIG_PATH") {
+        confy::store_path(path, cfg).unwrap();
+        return;
+    }
+    confy::store(APP_NAME, cfg).unwrap();
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum NetworkBackend {
+    #[default]
+    Tsi,
+    #[value(name = "unixstream", alias = "unix-stream")]
+    UnixStream,
+    #[value(name = "unixgram", alias = "unix-gram")]
+    UnixGram,
+    Passt,
+    Gvproxy,
+}
+
+impl NetworkBackend {
+    pub fn transport(self) -> Option<NetworkTransport> {
+        match self {
+            NetworkBackend::Tsi => None,
+            NetworkBackend::UnixStream | NetworkBackend::Passt => {
+                Some(NetworkTransport::UnixStream)
+            }
+            NetworkBackend::UnixGram | NetworkBackend::Gvproxy => Some(NetworkTransport::UnixGram),
+        }
+    }
+}
+
+impl std::fmt::Display for NetworkBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            NetworkBackend::Tsi => "tsi",
+            NetworkBackend::UnixStream => "unixstream",
+            NetworkBackend::UnixGram => "unixgram",
+            NetworkBackend::Passt => "passt",
+            NetworkBackend::Gvproxy => "gvproxy",
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NetworkTransport {
+    UnixStream,
+    UnixGram,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct VmNetworkConfig {
+    backend: NetworkBackend,
+    socket_path: Option<String>,
+}
+
+impl VmNetworkConfig {
+    pub fn new(backend: NetworkBackend, socket_path: Option<String>) -> VmNetworkConfig {
+        VmNetworkConfig {
+            backend,
+            socket_path: normalize_optional_string(socket_path),
+        }
+    }
+
+    pub fn validate_persisted(&self, scope: &str) -> Result<(), String> {
+        match self.backend {
+            NetworkBackend::Tsi => {
+                if self.socket_path.is_some() {
+                    Err(format!(
+                        "{scope}: --net-socket-path is only valid with a non-TSI backend."
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+            _ => {
+                if self.socket_path.is_none() {
+                    Err(format!(
+                        "{scope}: backend '{}' requires --net-socket-path.",
+                        self.backend
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+    }
+}
+
+pub fn normalize_optional_string(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+}
+
 #[derive(Default, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct VmConfig {
     name: String,
     cpus: u32,
@@ -40,14 +150,17 @@ pub struct VmConfig {
     dns: String,
     mapped_volumes: HashMap<String, String>,
     mapped_ports: HashMap<String, String>,
+    network: VmNetworkConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct KrunvmConfig {
     version: u8,
     default_cpus: u32,
     default_mem: u32,
     default_dns: String,
+    default_network: VmNetworkConfig,
     storage_volume: String,
     vmconfig_map: HashMap<String, VmConfig>,
 }
@@ -59,6 +172,7 @@ impl Default for KrunvmConfig {
             default_cpus: 2,
             default_mem: 1024,
             default_dns: "1.1.1.1".to_string(),
+            default_network: VmNetworkConfig::default(),
             storage_volume: String::new(),
             vmconfig_map: HashMap::new(),
         }
@@ -131,7 +245,7 @@ volume.
                     println!("success.");
                     println!("The volume has been configured. Please execute krunvm again");
                     cfg.storage_volume = volume;
-                    confy::store(APP_NAME, cfg).unwrap();
+                    store_krunvm_config(cfg);
                     std::process::exit(-1);
                 } else {
                     println!("failed.");
@@ -196,7 +310,7 @@ fn get_brew_prefix() -> Option<String> {
 #[cfg(target_os = "macos")]
 fn reexec() -> Result<(), Error> {
     let exec_path = env::current_exe().map_err(|_| ErrorKind::NotFound)?;
-    let exec_cstr = CString::new(exec_path.to_str().ok_or(ErrorKind::InvalidFilename)?)?;
+    let exec_cstr = CString::new(exec_path.to_str().ok_or(ErrorKind::InvalidInput)?)?;
 
     let args: Vec<CString> = env::args_os()
         .map(|arg| CString::new(arg.into_vec()).unwrap())
@@ -236,7 +350,7 @@ fn main() {
         }
     }
 
-    let mut cfg: KrunvmConfig = confy::load(APP_NAME).unwrap();
+    let mut cfg: KrunvmConfig = load_krunvm_config();
     let cli_args = Cli::parse();
 
     #[cfg(target_os = "macos")]

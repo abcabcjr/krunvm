@@ -31,6 +31,11 @@ pub fn printvm(vm: &VmConfig) {
     println!(" CPUs: {}", vm.cpus);
     println!(" RAM (MiB): {}", vm.mem);
     println!(" DNS server: {}", vm.dns);
+    println!(" Network backend: {}", vm.network.backend);
+    println!(
+        " Network socket path: {}",
+        vm.network.socket_path.as_deref().unwrap_or("<none>")
+    );
     println!(" Buildah container: {}", vm.container);
     println!(" Workdir: {}", vm.workdir);
     println!(" Mapped volumes: {:?}", vm.mapped_volumes);

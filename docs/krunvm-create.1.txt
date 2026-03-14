@@ -34,6 +34,16 @@ will attempt to return as many pages as possible to the host.
 *--name* _NAME_::
   The name to be assigned to this microVM.
 
+*--net-backend* _BACKEND_::
+  Selects the networking backend for this microVM.
++
+Supported values are `tsi`, `unixstream`, `unixgram`, `passt`, and `gvproxy`.
+
+*--net-socket-path* _PATH_::
+  Configures the unix socket path for the selected networking backend.
++
+This is required for all non-TSI backends persisted at create time.
+
 *-p, --port* _HOST_PORT:GUEST_PORT_::
   Exposes a port in the guest running in the microVM through a port in the host.
 +
